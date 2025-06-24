@@ -60,9 +60,9 @@ inputs:
 
   retry-all-errors:
     description: |
-      Whether to retry on all errors.
+      Whether to retry on errors downloading chainctl.
     required: false
-    default: false
+    default: "true"
 
 runs:
   using: "composite"
@@ -97,11 +97,37 @@ runs:
         fi
         echo "Downloading chainctl from ${url}"
 
-        if [[ "${{ env.CURL_RETRY_ALL_ERRORS }}" != "true" ]]; then
-          curl -o ./${out} -fsL --retry 5 --retry-delay 1 "${url}"
-        else
-          curl -o ./${out} -fsL --retry 5 --retry-delay 1 --retry-all-errors "${url}"
-        fi
+        # Retry logic with exponential backoff
+        max_attempts=5
+        attempt=0
+        delay=1
+        
+        while [ $attempt -lt $max_attempts ]; do
+          attempt=$((attempt + 1))
+          echo "Download attempt $attempt of $max_attempts..."
+          
+          if [[ "${{ env.CURL_RETRY_ALL_ERRORS }}" != "true" ]]; then
+            if curl -o ./${out} -fsL "${url}"; then
+              echo "Download successful!"
+              break
+            fi
+          else
+            if curl -o ./${out} -fsL --retry-all-errors "${url}"; then
+              echo "Download successful!"
+              break
+            fi
+          fi
+          
+          if [ $attempt -lt $max_attempts ]; then
+            echo "Download failed. Waiting ${delay} seconds before retry..."
+            sleep $delay
+            delay=$((delay * 2))  # Exponential backoff
+          else
+            echo "Failed to download chainctl after $max_attempts attempts"
+            exit 1
+          fi
+        done
+        
         chmod +x ./${out}
         echo "$(pwd)" >> $GITHUB_PATH
 
